@@ -11,6 +11,7 @@ import { registerCustomFieldTools } from "./tools/customFields";
 import { registerDocumentTools } from "./tools/documents";
 import { registerDocumentTypeTools } from "./tools/documentTypes";
 import { registerTagTools } from "./tools/tags";
+import { bearerAuthMiddleware, createAuthRouter } from "./auth";
 const { version } = require("../package.json") as { version: string };
 
 const {
@@ -31,6 +32,9 @@ const resolvedToken = token || process.env.PAPERLESS_API_KEY;
 const resolvedPublicUrl =
   publicUrl || process.env.PAPERLESS_PUBLIC_URL || resolvedBaseUrl;
 const resolvedPort = port ? parseInt(port, 10) : 3000;
+const resolvedApiToken = process.env.API_TOKEN;
+const resolvedMcpBaseUrl =
+  process.env.BASE_URL || `http://localhost:${resolvedPort}`;
 
 if (!resolvedBaseUrl || !resolvedToken) {
   console.error(
@@ -43,7 +47,6 @@ if (!resolvedBaseUrl || !resolvedToken) {
 }
 
 async function main() {
-  // Initialize API client and server once
   const api = new PaperlessAPI(resolvedBaseUrl!, resolvedToken!);
   const server = new McpServer(
     { name: "paperless-ngx", version },
@@ -51,7 +54,7 @@ async function main() {
       instructions: `
 Paperless-NGX MCP Server Instructions
 
-⚠️ CRITICAL: Always differentiate between operations on specific documents vs operations on the entire system:
+CRITICAL: Always differentiate between operations on specific documents vs operations on the entire system:
 
 - REMOVE operations (e.g., remove_tag in bulk_edit_documents): Affect only the specified documents, items remain in the system
 - DELETE operations (e.g., delete_tag, delete_correspondent): Permanently delete items from the entire system, affecting ALL documents that use them
@@ -77,7 +80,14 @@ The document tools return JSON data with document IDs that you can use to constr
     const app = express();
     app.use(express.json());
 
-    // Store transports for each session
+    if (resolvedApiToken) {
+      app.use(createAuthRouter(resolvedApiToken, resolvedMcpBaseUrl));
+      app.use(
+        ["/sse", "/messages", "/mcp"],
+        bearerAuthMiddleware(resolvedApiToken)
+      );
+    }
+
     const sseTransports: Record<string, SSEServerTransport> = {};
 
     app.post("/mcp", async (req, res) => {
@@ -95,37 +105,28 @@ The document tools return JSON data with document IDs that you can use to constr
         if (!res.headersSent) {
           res.status(500).json({
             jsonrpc: "2.0",
-            error: {
-              code: -32603,
-              message: "Internal server error",
-            },
+            error: { code: -32603, message: "Internal server error" },
             id: null,
           });
         }
       }
     });
 
-    app.get("/mcp", async (req, res) => {
+    app.get("/mcp", async (_req, res) => {
       res.writeHead(405).end(
         JSON.stringify({
           jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message: "Method not allowed.",
-          },
+          error: { code: -32000, message: "Method not allowed." },
           id: null,
         })
       );
     });
 
-    app.delete("/mcp", async (req, res) => {
+    app.delete("/mcp", async (_req, res) => {
       res.writeHead(405).end(
         JSON.stringify({
           jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message: "Method not allowed.",
-          },
+          error: { code: -32000, message: "Method not allowed." },
           id: null,
         })
       );
@@ -146,10 +147,7 @@ The document tools return JSON data with document IDs that you can use to constr
         if (!res.headersSent) {
           res.status(500).json({
             jsonrpc: "2.0",
-            error: {
-              code: -32603,
-              message: "Internal server error",
-            },
+            error: { code: -32603, message: "Internal server error" },
             id: null,
           });
         }
@@ -171,7 +169,6 @@ The document tools return JSON data with document IDs that you can use to constr
         `MCP Stateless Streamable HTTP Server listening on port ${resolvedPort}`
       );
     });
-    // await new Promise((resolve) => setTimeout(resolve, 1000000));
   } else {
     const transport = new StdioServerTransport();
     await server.connect(transport);
